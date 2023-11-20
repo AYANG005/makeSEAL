@@ -1,3 +1,6 @@
 {
-    "cmake.sourceDirectory": "/wsl.localhost/Ubuntu/home/aliensheep/makeSEAL"
+    "cmake.sourceDirectory": "/wsl.localhost/Ubuntu/home/aliensheep/makeSEAL",
+    "files.associations": {
+        "pointers": "cpp"
+    }
 }

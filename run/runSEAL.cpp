@@ -20,14 +20,14 @@ using namespace seal;
 
 vector<uint64_t> sk_vector_generator(int n, int slot_count, int N_n);
 vector<vector<int>> A_matrix_generator(int slot_count, int n);
-Ciphertext Hom_Lin_Trans(GaloisKeys galois_keys[], GaloisKeys gk2, vector<vector<uint64_t>> A, Ciphertext encrypted_matrix, PublicKey public_key, RelinKeys relin_keys,SEALContext context, SecretKey secret_key, SlotRing basic_slot_ring); //Declare Hom_Lin_Trans function
+Ciphertext Hom_Lin_Trans(GaloisKeys galois_keys[], GaloisKeys gk2, vector<vector<uint64_t>> A, Ciphertext encrypted_matrix, PublicKey public_key, RelinKeys relin_keys,SEALContext context, SecretKey secret_key, SlotRing basic_slot_ring, const std::vector<SlotRing::Rotation>& rot_array); //Declare Hom_Lin_Trans function
 
 int main()
 {
     
     // set up context
 	EncryptionParameters parms(scheme_type::bfv);
-	std::shared_ptr<SlotRing> slot_ring = p_257_test_parameters();//p_257_test_parameters();
+	std::shared_ptr<SlotRing> slot_ring = p_127_test_parameters();//p_257_test_parameters();
 	SlotRing basic_slot_ring = slot_ring->change_exponent(1); // this part here has to be 1 since they assume plaintext space is actually p^r = p
 	parms.set_poly_modulus_degree(slot_ring->N());
 	parms.set_coeff_modulus(CoeffModulus::BFVDefault(slot_ring->N()));
@@ -98,13 +98,13 @@ int main()
     
 
     // Encoding/Creating plaintext (Secret key//bfvct)
-    size_t slot_count = 128; 
-    size_t n = slot_count/2;
+    size_t slot_count = 64; 
+    size_t n = slot_count;
     size_t N_n = slot_count / n;
     size_t LWE_dim = slot_count*1; //Set to *1 if doing n < slot_count
 
     // Generate sk vector. Dimension could be anything.
-    vector<uint64_t> pod_matrix = sk_vector_generator(n, slot_count, N_n); //Set FIRST entry to n<N or LWE_dim. If set to n, it will compute (sk||sk||...||sk).
+    vector<uint64_t> pod_matrix = sk_vector_generator(LWE_dim, slot_count, N_n); //Set FIRST entry to n<N or LWE_dim. If set to n, it will compute (sk||sk||...||sk).
 
 
 
@@ -122,7 +122,7 @@ int main()
     Ciphertext x_enc; //Encrypt plaintext
     encryptor.encrypt(x_plain_boot, x_enc);
 
-    Bootstrapper bootstrapper(context, slot_ring, p_257_test_parameters_digit_extractor(*slot_ring));
+    Bootstrapper bootstrapper(context, slot_ring, p_127_test_parameters_digit_extractor(*slot_ring));
 	bootstrapper.initialize();
 
 	std::cout << "initialized bootstrapper" << std::endl;
@@ -167,7 +167,7 @@ int main()
                 }
         }
     for (int i=0; i<slot_count;i++){
-        cout << rslt[i]%257 << ' ';
+        cout << rslt[i]%127 << ' ';
     }
     cout <<endl;
 
@@ -180,7 +180,7 @@ int main()
 
     for (int k=0; k < LWE_dim/slot_count; k++){
         int B_2nd_dim;
-        if (LWE_dim == slot_count){
+        if (LWE_dim/slot_count == 1){
             B_2nd_dim = n;
         } else{ 
             B_2nd_dim = slot_count;
@@ -203,16 +203,26 @@ int main()
         GaloisKeys gk[slot_count];
         int rt = sqrt(n);
         
+        std::vector<SlotRing::Rotation> rot_array;
+        
+        for (int i=0;i<rt;i++){
+            SlotRing::Rotation rot = basic_slot_ring.rotate(-(i+1)*rt);
+            rot_array.push_back(std::move(rot));
+            keygen.create_galois_keys(std::vector{ std::get<0>(rot_array[i].galois_elements()), std::get<1>(rot_array[i].galois_elements()) }, gk[i]);
+        }
+        /*
         for (int i=0;i<rt;i++){
             SlotRing::Rotation rot = basic_slot_ring.rotate(-(i+1)*rt);
             keygen.create_galois_keys(std::vector{ std::get<0>(rot.galois_elements()), std::get<1>(rot.galois_elements()) }, gk[i]);
         }
+        */
         GaloisKeys gk2; //containing rotation by 1.
         SlotRing::Rotation rot = basic_slot_ring.rotate(-1);
-        keygen.create_galois_keys(std::vector{ std::get<0>(rot.galois_elements()), std::get<1>(rot.galois_elements()) }, gk2);
+        rot_array.push_back(std::move(rot));
+        keygen.create_galois_keys(std::vector{ std::get<0>(rot_array[rt].galois_elements()), std::get<1>(rot_array[rt].galois_elements()) }, gk2);
 
         auto start2 = std::chrono::steady_clock::now();
-        Ciphertext rslt_enc = Hom_Lin_Trans(gk, gk2, B, encrypted_matrix, pk, rk, context, sk, basic_slot_ring);
+        Ciphertext rslt_enc = Hom_Lin_Trans(gk, gk2, B, encrypted_matrix, pk, rk, context, sk, basic_slot_ring, rot_array);
         auto end2 = std::chrono::steady_clock::now();
         std::cout << "homomorphically decrypted in " << std::chrono::duration_cast<std::chrono::milliseconds>(end2 - start2).count() << " ms  " << std::endl;
 
@@ -239,7 +249,7 @@ vector<vector<int>> A_matrix_generator(int slot_count, int n)
 {
     std::random_device rd2;     // Only used once to initialise (seed) engine
     std::mt19937 rng2(rd2());    // Random-number engine used (Mersenne-Twister in this case)
-    std::uniform_int_distribution<unsigned long long int> uni2(0,257); // Guaranteed unbiased
+    std::uniform_int_distribution<unsigned long long int> uni2(0,127); // Guaranteed unbiased
     vector<vector<int>> A;
     for (int i = 0; i < slot_count; i++) {  
         vector<int> temp; 
@@ -273,49 +283,47 @@ vector<uint64_t> sk_vector_generator(int n, int slot_count, int N_n)
     return pod_matrix2;
 }
 
-Ciphertext Hom_Lin_Trans(GaloisKeys galois_keys[], GaloisKeys gk2, vector<vector<uint64_t>> A, Ciphertext encrypted_matrix, PublicKey public_key, RelinKeys relin_keys,SEALContext context, SecretKey secret_key, SlotRing basic_slot_ring)
+Ciphertext Hom_Lin_Trans(GaloisKeys galois_keys[], GaloisKeys gk2, vector<vector<uint64_t>> A, Ciphertext encrypted_matrix, PublicKey public_key, RelinKeys relin_keys,SEALContext context, SecretKey secret_key, SlotRing basic_slot_ring, const std::vector<SlotRing::Rotation>& rot_array)
 {
+    auto startfunc = std::chrono::steady_clock::now();
     Encryptor encryptor(context, public_key); // Do we need to declare this globally or use pointers instead?
     Evaluator evaluator(context);
     Decryptor decryptor(context, secret_key);
 
     // Initialising res_k
     int n = A[0].size();
-    cout << "n size: "<< n <<endl;
-    size_t slot_count = 128;
+    size_t slot_count = 64;
     int rt = sqrt(n);
     vector<uint64_t> res_k(basic_slot_ring.N() , 0ULL); 
+    /*
+    poly data;
+    auto start3 = std::chrono::steady_clock::now();
+    for (int i = 0; i<slot_count;i++){
+        poly_add(data, basic_slot_ring.from_slot_value({ res_k[i] }, i), basic_slot_ring.R().scalar_mod);
+    }
+    auto end3 = std::chrono::steady_clock::now();
+    cout << "DATA[1]: "<<data[1] <<endl;
+    std::cout << "Assigned slot values in " << std::chrono::duration_cast<std::chrono::milliseconds>(end3 - start3).count() << " ms  " << std::endl;
+    */
 
 	Plaintext res_k_plain{ gsl::span<const uint64_t>(res_k) };
     Ciphertext res_k_enc;
     encryptor.encrypt(res_k_plain, res_k_enc);
     Ciphertext res[rt];
-    auto start4 = std::chrono::steady_clock::now();
     for (int i = 0; i<rt;i++){ //might need to adjust index to start at 1
         res[i] = res_k_enc;
     }
-    auto end4 = std::chrono::steady_clock::now();
-    std::cout << "Assigned vector values in " << std::chrono::duration_cast<std::chrono::milliseconds>(end4 - start4).count() << " ms  " << std::endl;
     
     //Initialising bfvct_rot_is
     Ciphertext bfvct_rot[rt]; // Initializing bfvct_rot_is
 
     Ciphertext bfvct_rot2[rt];
-    auto start5 = std::chrono::steady_clock::now();
-    auto end5 = std::chrono::steady_clock::now();
+    
     for (int i = 0; i<rt; i++){
             bfvct_rot[i] = encrypted_matrix;
-            if (i==1){
-                start5 = std::chrono::steady_clock::now();
-            } 
-            SlotRing::Rotation rot = basic_slot_ring.rotate(-(i+1)*rt);
-            if (i==1){
-                end5 = std::chrono::steady_clock::now();
-                std::cout << "Assigned rot in " << std::chrono::duration_cast<std::chrono::milliseconds>(end5 - start5).count() << " ms  " << std::endl;
-            }
-            rot.apply_ciphertext(bfvct_rot[i], evaluator, galois_keys[i], bfvct_rot2[i]);
+            rot_array[i].apply_ciphertext(bfvct_rot[i], evaluator, galois_keys[i], bfvct_rot2[i]);
     }
-    
+
     Ciphertext c;
     int ind_ct;
     int ind_a;
@@ -325,28 +333,20 @@ Ciphertext Hom_Lin_Trans(GaloisKeys galois_keys[], GaloisKeys gk2, vector<vector
             for (int j = 0; j<slot_count;j++){
                 ind_ct = (j-k+1) % slot_count;
                 ind_a = (j+i*rt) % n;
-                if (j==1 && i==1 && k==1){
-                    start5 = std::chrono::steady_clock::now();
-                } 
                 poly_add(tmp, basic_slot_ring.from_slot_value({ A[ind_ct][ind_a] }, j), basic_slot_ring.R().scalar_mod);
-                if (j==1 && i==1 && k==1){
-                    end5 = std::chrono::steady_clock::now();
-                    std::cout << "Assigned add in " << std::chrono::duration_cast<std::chrono::milliseconds>(end5 - start5).count() << " ms  " << std::endl;
-                }
             }
             Plaintext tmp_plain{ gsl::span<const uint64_t>(tmp) };
             evaluator.multiply_plain(bfvct_rot2[i-1], tmp_plain, c);
-            evaluator.relinearize_inplace(c, relin_keys); 
             evaluator.add_inplace(res[k-1],c);
         }
     }
 
-    SlotRing::Rotation rot = basic_slot_ring.rotate(-1);
     for (int i = 1; i<rt; i++){
-        rot.apply_ciphertext(res[rt-i+1-1], evaluator, gk2, c);
+        rot_array[rt].apply_ciphertext(res[rt-i+1-1], evaluator, gk2, c);
         evaluator.add_inplace(res[rt-i-1],c);
     }
-
+    auto endfunc = std::chrono::steady_clock::now();
+    std::cout << "Function run in " << std::chrono::duration_cast<std::chrono::milliseconds>(endfunc - startfunc).count() << " ms  " << std::endl;
     return res[0];
 }
 
